@@ -1,0 +1,6 @@
+name:
+ge_release_svc_prod1_WindowsSDK.iso
+link:
+https://go.microsoft.com/fwlink/?linkid=2335668
+zipBaseName:
+ge_release_svc_prod1_WindowsSDK
