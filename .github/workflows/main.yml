@@ -17,7 +17,7 @@ jobs:
           # 程序1：WindowsSDK
           - program_base: "WindowsSDK"
             index: 0
-            last_index: 0  # 总程序数-1（当前3个程序，最后索引为2）
+            last_index: 0
                       
     steps:
       # 步骤：拉取仓库代码
@@ -124,57 +124,129 @@ jobs:
           echo "$RELEASE_TIME_CONTENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      # 步骤5.1：计算文件哈希值（保持之前的无乱码配置）
-      - name: 计算文件哈希值（大写+无乱码）
+      # 步骤：计算文件哈希值（大写+无乱码）+ 生成hash.txt
+      - name: 计算文件哈希值（大写+无乱码）并生成hash.txt
         if: steps.check_tag.outputs.tag_exists == 'false'
         shell: bash
         env:
           LC_ALL: en_US.UTF-8
         run: |
+          # 检查downloading目录是否存在且有文件
+          if [ ! -d "./downloading" ] || [ -z "$(ls -A ./downloading)" ]; then
+            echo "Error: downloading目录不存在或为空"
+            exit 1
+          fi
+          
+          # 初始化哈希信息（用于Release body）
           HASH_INFO="### File Checksums"
+          # 初始化hash.txt内容（包含头部信息）
+          HASH_TXT_CONTENT="=== File Hash Checksum (${{ matrix.program_base }}) ==="
+          HASH_TXT_CONTENT+=$'\n发布时间（本地）: '"$(date +"%Y-%m-%d %H:%M:%S %Z")"
+          HASH_TXT_CONTENT+=$'\n发布时间（UTC）: '"$(TZ=UTC date +"%Y-%m-%d %H:%M:%S UTC")"
+          HASH_TXT_CONTENT+=$'\n版本标签: ${{ steps.read_info.outputs.tag }}'
+          HASH_TXT_CONTENT+=$'\n==============================================='
+          
           for file in ./downloading/*; do
             if [ -f "$file" ]; then
               filename=$(basename "$file")
-              HASH_INFO+=$'\n\n#### '"$filename"
-              HASH_INFO+=$'\nMD5: '"$(openssl md5 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')"
-              HASH_INFO+=$'\nSHA1: '"$(openssl sha1 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')"
-              HASH_INFO+=$'\nSHA256: '"$(openssl sha256 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')"
-              HASH_INFO+=$'\nSHA512: '"$(openssl sha512 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')"
-              # CRC32 计算
+              # 跳过hash.txt本身（避免循环处理）
+              if [ "$filename" = "hash.txt" ]; then
+                continue
+              fi
+              
+              # 计算各种哈希值
+              md5_val=$(openssl md5 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+              sha1_val=$(openssl sha1 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+              sha256_val=$(openssl sha256 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+              sha512_val=$(openssl sha512 -hex "$file" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+              # CRC32
               if command -v cksum &> /dev/null; then
                 crc_dec=$(cksum "$file" | awk '{print $1}')
-                crc_hex=$(printf "%X" "$crc_dec")
-                HASH_INFO+=$'\nCRC32: '"$crc_hex"
+                crc_hex=$(printf "%X" "$crc_dec" | tr '[:lower:]' '[:upper:]')
               else
                 crc_hex=$(openssl crc32 "$file" | tr '[:lower:]' '[:upper:]')
-                HASH_INFO+=$'\nCRC32: '"$crc_hex"
               fi
+              
+              # 更新Release body的哈希信息
+              HASH_INFO+=$'\n\n#### '"$filename"
+              HASH_INFO+=$'\nMD5: '"$md5_val"
+              HASH_INFO+=$'\nSHA1: '"$sha1_val"
+              HASH_INFO+=$'\nSHA256: '"$sha256_val"
+              HASH_INFO+=$'\nSHA512: '"$sha512_val"
+              HASH_INFO+=$'\nCRC32: '"$crc_hex"
+              
+              # 更新hash.txt的内容（更易读的格式）
+              HASH_TXT_CONTENT+=$'\n\n[文件] '"$filename"
+              HASH_TXT_CONTENT+=$'\nMD5    : '"$md5_val"
+              HASH_TXT_CONTENT+=$'\nSHA1   : '"$sha1_val"
+              HASH_TXT_CONTENT+=$'\nSHA256 : '"$sha256_val"
+              HASH_TXT_CONTENT+=$'\nSHA512 : '"$sha512_val"
+              HASH_TXT_CONTENT+=$'\nCRC32  : '"$crc_hex"
             fi
           done
-          # 写入哈希信息到环境变量
+          
+          # 添加尾部信息到hash.txt
+          HASH_TXT_CONTENT+=$'\n\n==============================================='
+          HASH_TXT_CONTENT+=$'\n提示：请验证下载文件的哈希值以确保文件完整性'
+          
+          # 1. 写入哈希信息到环境变量（供Release body使用）
           echo "HASH_INFO<<EOF" >> $GITHUB_ENV
           echo "$HASH_INFO" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
+          
+          # 2. 生成hash.txt文件到downloading目录（随资产发布）
+          echo "$HASH_TXT_CONTENT" > ./downloading/hash.txt
+          echo "已生成hash.txt文件，包含所有发布文件的哈希值"
+          echo "hash.txt路径：./downloading/hash.txt"
+          # 验证文件是否生成成功
+          if [ -f "./downloading/hash.txt" ]; then
+            echo "hash.txt生成成功，文件大小：$(du -sh ./downloading/hash.txt | awk '{print $1}')"
+          else
+            echo "Error: hash.txt生成失败"
+            exit 1
+          fi
 
-      # 步骤5：发布Release（同时显示两个时间）
+      # 步骤：发布Release（完善body内容，包含所有资产文件+hash.txt）
       - name: 发布 ${{ matrix.program_base }} 到 Release
         if: steps.check_tag.outputs.tag_exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.read_info.outputs.tag }}
           name: ${{ steps.read_info.outputs.title }}
-          files: ./downloading/*
+          files: |
+            ./downloading/*  # 包含所有发布文件和生成的hash.txt
           body: |
+            ${{ env.RELEASE_TIME }}
+            
+            ## 发布说明
+            - 程序名称：${{ matrix.program_base }}
+            - 自动构建：通过GitHub Actions自动生成并发布
+            - 版本标签：${{ steps.read_info.outputs.tag }}
+            - 包含文件：发布文件 + hash.txt（哈希值验证文件）
+            
+            ${{ env.HASH_INFO }}
+            
+            ## 注意事项
+            1. 下载文件后请验证哈希值确保文件完整性（可使用hash.txt进行对比）
+            2. hash.txt包含所有发布文件的MD5/SHA1/SHA256/SHA512/CRC32哈希值
+            3. 如有使用问题，请在Issues中反馈
+            4. 本发布为自动生成，请勿手动修改标签
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
-      # 步骤6：清理下载目录（非最后一个程序时执行）
+      # 步骤：清理下载目录（非最后一个程序时执行）
       - name: 清理下载文件夹
         if: ${{ matrix.index != matrix.last_index }}
         run: |
           if (Test-Path ./downloading) {
-            Remove-Item ./downloading/* -Recurse -Force
-            Write-Host "已清理 downloading 文件夹，准备处理下一个程序"
+            # 先检查目录是否有文件
+            if (Get-ChildItem ./downloading -ErrorAction SilentlyContinue) {
+              Remove-Item ./downloading/* -Recurse -Force
+              Write-Host "已清理 downloading 文件夹，准备处理下一个程序"
+            } else {
+              Write-Host "downloading 文件夹已为空，无需清理"
+            }
+          } else {
+            Write-Host "downloading 文件夹不存在，无需清理"
           }
         shell: pwsh
