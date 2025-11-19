@@ -214,10 +214,6 @@ jobs:
           tag_name: ${{ steps.read_info.outputs.tag }}
           name: ${{ steps.read_info.outputs.title }}
           files: ./downloading/*
-          body: |
-            ${{ env.RELEASE_TIME }}
-            
-            ${{ env.HASH_INFO }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
