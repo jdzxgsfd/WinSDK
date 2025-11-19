@@ -206,31 +206,18 @@ jobs:
             exit 1
           fi
 
-      # 步骤：发布Release（完善body内容，包含所有资产文件+hash.txt）
+      # 步骤5：发布Release（同时显示两个时间）
       - name: 发布 ${{ matrix.program_base }} 到 Release
         if: steps.check_tag.outputs.tag_exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.read_info.outputs.tag }}
           name: ${{ steps.read_info.outputs.title }}
-          files: |
-            ./downloading/*  # 包含所有发布文件和生成的hash.txt
+          files: ./downloading/*
           body: |
             ${{ env.RELEASE_TIME }}
             
-            ## 发布说明
-            - 程序名称：${{ matrix.program_base }}
-            - 自动构建：通过GitHub Actions自动生成并发布
-            - 版本标签：${{ steps.read_info.outputs.tag }}
-            - 包含文件：发布文件 + hash.txt（哈希值验证文件）
-            
             ${{ env.HASH_INFO }}
-            
-            ## 注意事项
-            1. 下载文件后请验证哈希值确保文件完整性（可使用hash.txt进行对比）
-            2. hash.txt包含所有发布文件的MD5/SHA1/SHA256/SHA512/CRC32哈希值
-            3. 如有使用问题，请在Issues中反馈
-            4. 本发布为自动生成，请勿手动修改标签
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
